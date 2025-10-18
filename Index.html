@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Endless Runner</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+      background:#0b0f1a;
+      color:#e6edf3;
+      display:grid;
+      place-items:center;
+      height:100svh;
+    }
+
+    #wrap { width:min(960px, 100%); padding:16px; }
+
+    /* Header without the old title */
+    header {
+      display:flex;
+      align-items:center;
+      justify-content:flex-end; /* push the button to the right */
+      gap:12px;
+      margin-bottom:12px;
+    }
+
+    .btn {
+      background:#1f2637;
+      border:1px solid #2b3550;
+      color:#e6edf3;
+      padding:8px 12px;
+      border-radius:10px;
+      cursor:pointer;
+    }
+    .btn:hover { background:#26304a; }
+
+    /* Canvas that fades into the page background */
+    .fade-frame {
+      position: relative;
+      /* This lets the outside of the canvas show the page bg */
+      isolation: isolate;
+    }
+
+    canvas {
+      width:100%;
+      height:520px; /* Increased height for larger view */
+      display:block;
+
+      /* Game background (kept from original) */
+      background:linear-gradient(#0b1222, #0e172a);
+
+      /* Remove hard box + borders */
+      border:none;
+      border-radius:0;
+      box-shadow:none;
+
+      /* Edge fade (works in modern browsers) */
+      --fade: 120px; /* even larger feather size for bigger peripheral */
+      mask-image:
+        radial-gradient(closest-side, #000 calc(100% - var(--fade)), transparent 100%);
+      -webkit-mask-image:
+        radial-gradient(closest-side, #000 calc(100% - var(--fade)), transparent 100%);
+    }
+
+    /* Controls-only footer (removed the Cursor text) */
+    footer {
+      display:flex;
+      justify-content:flex-start;
+      align-items:center;
+      margin-top:10px;
+      font-size:13px;
+      opacity:.9;
+      gap:12px;
+    }
+    .kbd {
+      padding:2px 6px;
+      border:1px solid #2b3550;
+      border-bottom-width:2px;
+      border-radius:6px;
+      background:#161b2b;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    /* Optional: if you want a wider/softer fade on very large screens, bump it slightly */
+    @media (min-width: 1100px) {
+      canvas { --fade: 160px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <header>
+      <!-- Title removed; only the Restart button remains -->
+      <button id="reset" class="btn" title="Restart (R)">Restart</button>
+    </header>
+
+    <div class="fade-frame">
+      <canvas id="game" width="960" height="520" aria-label="Endless Runner Game"></canvas>
+    </div>
+
+    <footer>
+      <div>Controls: <span class="kbd">Space</span>/<span class="kbd">↑</span> to jump (double jump in air) · <span class="kbd">R</span> to restart · <span class="kbd">H</span> to show hitbox · Tap on mobile</div>
+      <!-- “Built for Cursor quick start” removed -->
+    </footer>
+  </div>
+
+  <script>
+  // ======= Basic Endless Runner (no libraries) =======
+  const canvas = document.getElementById('game');
+  const c = canvas.getContext('2d');
+
+  // world
+  const SIZE = { w: canvas.width, h: canvas.height };
+  const GROUND_Y = SIZE.h - 64; // ground baseline
+  const GRAVITY = 1800; // px/s^2
+  const JUMP_V = 850;   // increased jump velocity for bigger objects
+
+  // cactus images
+  const cactusImages = [];
+  const cactusPaths = [
+    'Assets/cactus_1.png',
+    'Assets/cactus_2.png', 
+    'Assets/cactus_3.png',
+    'Assets/cactus_4.png',
+    'Assets/cactus_5.png'
+  ];
+  
+  // loot image
+  const lootImage = new Image();
+  lootImage.src = 'Assets/glowing_loot.png';
+  
+  // background image
+  const backgroundImage = new Image();
+  backgroundImage.src = 'Assets/rolling_background.png';
+  
+  // character walk images
+  const walkImage1 = new Image();
+  walkImage1.src = 'Assets/walk_1.png';
+  const walkImage2 = new Image();
+  walkImage2.src = 'Assets/walk_2.png';
+  
+  // Load cactus images
+  let imagesLoaded = 0;
+  const totalImages = cactusPaths.length + 4; // +4 for loot, background, and 2 walk images
+  
+  cactusPaths.forEach((path, index) => {
+    const img = new Image();
+    img.onload = () => {
+      imagesLoaded++;
+      if (imagesLoaded === totalImages) {
+        console.log('All images loaded');
+      }
+    };
+    img.src = path;
+    cactusImages[index] = img;
+  });
+  
+  // Load loot image
+  lootImage.onload = () => {
+    imagesLoaded++;
+    if (imagesLoaded === totalImages) {
+      console.log('All images loaded');
+    }
+  };
+  
+  // Load background image
+  backgroundImage.onload = () => {
+    imagesLoaded++;
+    if (imagesLoaded === totalImages) {
+      console.log('All images loaded');
+    }
+  };
+  
+  // Load walk images
+  walkImage1.onload = () => {
+    imagesLoaded++;
+    if (imagesLoaded === totalImages) {
+      console.log('All images loaded');
+    }
+  };
+  
+  walkImage2.onload = () => {
+    imagesLoaded++;
+    if (imagesLoaded === totalImages) {
+      console.log('All images loaded');
+    }
+  };
+
+  // player
+  const player = {
+    x: 250, // Moved slightly more to the right
+    y: GROUND_Y - 80, // Adjusted for larger size
+    w: 80, // Made even bigger
+    h: 80, // Made even bigger
+    vy: 0,
+    onGround: true,
+    canDoubleJump: false,
+    color: '#6cf0ff',
+    walkFrame: 0, // Animation frame (0 or 1)
+    walkTimer: 0,  // Timer for animation
+    // Collision hitbox (even closer to cactuses)
+    hitbox: {
+      x: 20, // Offset from player.x (centered)
+      y: 35, // Offset from player.y (skip more transparent top area)
+      w: 25, // Even closer to cactuses
+      h: 25  // Even closer to cactuses
+    }
+  };
+
+  // spawn systems
+  let obstacles = []; // crates you must jump over
+  let cans = [];      // collectibles for score
+  let speed = 360;    // world scroll speed (px/s)
+  let score = 0; // Bag counter
+  let high = Number(localStorage.getItem('runner-high') || 0);
+  let gameOver = false;
+  let backgroundOffset = 0; // for parallax scrolling
+  
+  // Leaderboard system
+  let leaderboard = JSON.parse(localStorage.getItem('runner-leaderboard') || '[]');
+  const MAX_LEADERBOARD_ENTRIES = 10;
+  let showNameInput = false;
+  let playerName = '';
+  let showHitbox = false; // Debug option to show hitbox
+
+  // util
+  const rand = (min, max) => Math.random() * (max - min) + min;
+  
+  // Get player's collision rectangle (using hitbox)
+  function getPlayerCollisionRect() {
+    return {
+      x: player.x + player.hitbox.x,
+      y: player.y + player.hitbox.y,
+      w: player.hitbox.w,
+      h: player.hitbox.h
+    };
+  }
+  
+  function updateLeaderboard(score, name = 'Anonymous') {
+    // Add current score to leaderboard
+    const now = new Date();
+    const entry = {
+      score: score,
+      name: name || 'Anonymous',
+      date: now.toISOString().split('T')[0], // YYYY-MM-DD format
+      timestamp: now.getTime()
+    };
+    
+    leaderboard.push(entry);
+    
+    // Sort by score (highest first) and keep only top entries
+    leaderboard.sort((a, b) => b.score - a.score);
+    leaderboard = leaderboard.slice(0, MAX_LEADERBOARD_ENTRIES);
+    
+    // Save to localStorage
+    localStorage.setItem('runner-leaderboard', JSON.stringify(leaderboard));
+    
+    // Update high score
+    high = Math.max(high, score);
+    localStorage.setItem('runner-high', high);
+  }
+
+  function spawnObstacle() {
+    // Slightly larger varied cactus sizing, moved up a bit
+    const w = rand(70, 150); // Slightly larger width
+    const h = rand(60, 130); // Slightly larger height range
+    const cactusIndex = Math.floor(Math.random() * cactusImages.length);
+    obstacles.push({ 
+      x: SIZE.w + rand(0, 50), 
+      y: GROUND_Y - h + 10, // Moved up by 5px (was +15, now +10)
+      w, 
+      h, 
+      color: '#ff6b6b',
+      cactusIndex: cactusIndex
+    });
+  }
+
+  function spawnCan() {
+    const size = rand(60, 90); // Even larger loot sizing
+    const y = GROUND_Y - size - rand(40, 120);
+    cans.push({ 
+      x: SIZE.w + rand(0, 50), 
+      y, 
+      size, // Use size instead of radius
+      color: '#ffd166', 
+      glow: 0 
+    });
+  }
+
+  // schedule spawns on a timer-ish cadence
+  let obsTimer = 0, canTimer = 0;
+
+  // input
+  function jump() {
+    if (gameOver) return restart();
+    if (player.onGround) {
+      // First jump
+      player.vy = -JUMP_V; // up is negative
+      player.onGround = false;
+      player.canDoubleJump = true;
+    } else if (player.canDoubleJump) {
+      // Double jump
+      player.vy = -JUMP_V * 0.8; // slightly weaker than first jump
+      player.canDoubleJump = false;
+    }
+  }
+
+  addEventListener('keydown', (e) => {
+    if (showNameInput) {
+      // Handle name input
+      if (e.key === 'Enter') {
+        // Submit name and update leaderboard
+        updateLeaderboard(score, playerName);
+        showNameInput = false;
+        playerName = '';
+      } else if (e.key === 'Backspace') {
+        // Remove last character
+        playerName = playerName.slice(0, -1);
+      } else if (e.key.length === 1 && playerName.length < 12) {
+        // Add character (limit to 12 characters)
+        playerName += e.key;
+      }
+    } else {
+      // Normal game controls
+      if (e.code === 'Space' || e.code === 'ArrowUp') jump();
+      if (e.key.toLowerCase() === 'r') restart();
+      if (e.key.toLowerCase() === 'h') showHitbox = !showHitbox; // Toggle hitbox visibility
+    }
+  });
+  canvas.addEventListener('pointerdown', jump);
+  document.getElementById('reset').onclick = () => restart();
+
+  // physics/update
+  let last = performance.now();
+  function loop(now = performance.now()) {
+    const dt = Math.min(0.033, (now - last) / 1000); // cap dt to avoid big jumps
+    last = now;
+
+    // clear
+    c.clearRect(0, 0, SIZE.w, SIZE.h);
+
+    // parallax background
+    drawBg(now);
+
+    if (!gameOver) update(dt);
+    render();
+
+    requestAnimationFrame(loop);
+  }
+
+  function update(dt) {
+    // difficulty increases slowly
+    speed += 6 * dt;
+    
+    // Update background scroll (slower than foreground for parallax effect)
+    backgroundOffset -= speed * dt * 0.3; // 30% of main speed for parallax
+
+    // player gravity
+    player.vy += GRAVITY * dt;
+    player.y += player.vy * dt;
+
+    if (player.y + player.h >= GROUND_Y) {
+      player.y = GROUND_Y - player.h;
+      player.vy = 0;
+      player.onGround = true;
+      player.canDoubleJump = false; // Reset double jump when landing
+    }
+    
+    // Walking animation
+    if (player.onGround) {
+      player.walkTimer += dt;
+      if (player.walkTimer >= 0.2) { // Switch frame every 0.2 seconds
+        player.walkFrame = 1 - player.walkFrame; // Toggle between 0 and 1
+        player.walkTimer = 0;
+      }
+    } else {
+      // Stop animation when jumping
+      player.walkFrame = 0;
+      player.walkTimer = 0;
+    }
+
+    // spawn timers
+    obsTimer -= dt;  if (obsTimer <= 0) { spawnObstacle(); obsTimer = rand(0.8, 1.6); }
+    canTimer -= dt;  if (canTimer <= 0) { spawnCan(); canTimer = rand(0.9, 1.7); }
+
+    // move & cull entities
+    obstacles.forEach(o => o.x -= speed * dt);
+    obstacles = obstacles.filter(o => o.x + o.w > -20);
+
+    cans.forEach(cn => { cn.x -= speed * dt; cn.glow = (cn.glow + 4*dt) % 1; });
+    cans = cans.filter(cn => cn.x + cn.size > -20);
+
+    // collisions
+    for (const o of obstacles) {
+      const playerRect = getPlayerCollisionRect();
+      if (rectRect(playerRect, o)) {
+        gameOver = true;
+        showNameInput = true;
+      }
+    }
+    for (let i = cans.length - 1; i >= 0; i--) {
+      const can = cans[i];
+      const playerRect = getPlayerCollisionRect();
+      // Convert to circle collision using size as diameter
+      const canCircle = { x: can.x + can.size/2, y: can.y + can.size/2, r: can.size/2 };
+      if (rectCircle(playerRect, canCircle)) {
+        score += 1; // Just count bags
+        cans.splice(i, 1);
+      }
+    }
+  }
+
+  // drawing
+  function drawBg(t) {
+    // Draw rolling background image
+    if (backgroundImage && backgroundImage.complete) {
+      const bgWidth = backgroundImage.width;
+      const bgHeight = backgroundImage.height;
+      
+      // Calculate how many times to repeat the background horizontally
+      const repeatCount = Math.ceil(SIZE.w / bgWidth) + 2;
+      
+      // Draw the background with parallax scrolling
+      for (let i = 0; i < repeatCount; i++) {
+        const x = (backgroundOffset % bgWidth) + (i * bgWidth);
+        c.drawImage(backgroundImage, x, 0, bgWidth, SIZE.h);
+      }
+    } else {
+      // Fallback to original background if image not loaded
+      c.fillStyle = '#0a1326';
+      c.fillRect(0, GROUND_Y + 1, SIZE.w, SIZE.h - GROUND_Y);
+
+      c.strokeStyle = '#1f2a4a';
+      c.lineWidth = 2;
+      const step = 80; const offset = (t / 8) % step;
+      for (let x = -offset; x < SIZE.w; x += step) {
+        c.beginPath();
+        c.moveTo(x, GROUND_Y); c.lineTo(x + 30, GROUND_Y); c.stroke();
+      }
+    }
+    
+    // Always draw a visible floor/ground line
+    c.fillStyle = '#0a1326';
+    c.fillRect(0, GROUND_Y, SIZE.w, SIZE.h - GROUND_Y);
+    
+    // Add ground line for definition
+    c.strokeStyle = '#2b3550';
+    c.lineWidth = 2;
+    c.beginPath();
+    c.moveTo(0, GROUND_Y);
+    c.lineTo(SIZE.w, GROUND_Y);
+    c.stroke();
+  }
+
+  function render() {
+    // draw player
+    if (walkImage1.complete && walkImage2.complete) {
+      if (player.onGround) {
+        // Draw walking character when on ground
+        const walkImg = player.walkFrame === 0 ? walkImage1 : walkImage2;
+        c.drawImage(walkImg, player.x, player.y, player.w, player.h);
+      } else {
+        // Draw walk_2.png when jumping (paused animation)
+        c.drawImage(walkImage2, player.x, player.y, player.w, player.h);
+      }
+    } else {
+      // Fallback to colored rectangle
+      c.fillStyle = player.color;
+      roundRect(c, player.x, player.y, player.w, player.h, 8, true);
+    }
+    
+    // Visual feedback for double jump availability
+    if (!player.onGround && player.canDoubleJump) {
+      // Draw a small indicator above the player when double jump is available
+      c.fillStyle = '#ffd166';
+      c.beginPath();
+      c.arc(player.x + player.w/2, player.y - 8, 4, 0, Math.PI * 2);
+      c.fill();
+    }
+    
+    // Debug: Show hitbox (press H to toggle)
+    if (showHitbox) {
+      const hitbox = getPlayerCollisionRect();
+      c.strokeStyle = '#ff0000';
+      c.lineWidth = 2;
+      c.strokeRect(hitbox.x, hitbox.y, hitbox.w, hitbox.h);
+    }
+
+    // draw obstacles (cactus images)
+    for (const o of obstacles) {
+      const cactusImg = cactusImages[o.cactusIndex];
+      if (cactusImg && cactusImg.complete) {
+        // Draw the cactus image directly (transparent)
+        c.drawImage(cactusImg, o.x, o.y, o.w, o.h);
+      } else {
+        // Fallback to colored rectangle if image not loaded
+        c.fillStyle = o.color;
+        roundRect(c, o.x, o.y, o.w, o.h, 6, true);
+      }
+    }
+
+    // draw cans (loot collectibles)
+    for (const cn of cans) {
+      if (lootImage && lootImage.complete) {
+        // Draw the loot image with glow effect (transparent)
+        c.save();
+        c.globalAlpha = 0.8 + 0.2 * Math.sin(cn.glow * Math.PI * 2);
+        c.drawImage(lootImage, cn.x, cn.y, cn.size, cn.size);
+        c.restore();
+      } else {
+        // Fallback to colored circle if image not loaded
+        c.beginPath();
+        c.arc(cn.x + cn.size/2, cn.y + cn.size/2, cn.size/2, 0, Math.PI * 2);
+        c.fillStyle = cn.color; c.fill();
+        // little shimmer
+        c.globalAlpha = 0.6; c.beginPath(); c.arc(cn.x + cn.size/2 - 4, cn.y + cn.size/2 - 6, cn.size/2 * 0.35 + Math.sin(cn.glow*Math.PI)*1.5, 0, Math.PI*2); c.fillStyle = '#fff2'; c.fill(); c.globalAlpha = 1;
+      }
+    }
+
+    // UI - Bag counter in top left with background (always visible)
+    c.fillStyle = '#0b0f1a'; // Solid background
+    c.fillRect(15, 10, 140, 45);
+    
+    c.fillStyle = '#ffd166';
+    c.font = '700 32px system-ui, -apple-system, Segoe UI, Roboto';
+    c.fillText(`Bags: ${score}`, 25, 40);
+    
+    // Best score in top right
+    c.fillStyle = '#e6edf3';
+    c.font = '600 18px system-ui, -apple-system, Segoe UI, Roboto';
+    c.fillText(`Best: ${high}`, SIZE.w - 120, 30);
+
+    if (gameOver) {
+      c.fillStyle = '#0b0f1acc';
+      c.fillRect(0, 0, SIZE.w, SIZE.h);
+      c.fillStyle = '#e6edf3';
+      c.textAlign = 'center';
+      c.font = '700 36px system-ui';
+      c.fillText('Game Over', SIZE.w/2, SIZE.h/2 - 120);
+      
+      // Show final score
+      c.font = '600 24px system-ui';
+      c.fillText(`Final Score: ${score}`, SIZE.w/2, SIZE.h/2 - 80);
+      
+      if (showNameInput) {
+        // Show name input
+        c.font = '600 20px system-ui';
+        c.fillText('Enter your name:', SIZE.w/2, SIZE.h/2 - 40);
+        
+        c.font = '500 18px system-ui';
+        c.fillStyle = '#ffd166';
+        c.fillText(`> ${playerName}_`, SIZE.w/2, SIZE.h/2 - 10);
+        
+        c.fillStyle = '#e6edf3';
+        c.font = '500 16px system-ui';
+        c.fillText('Press Enter to submit', SIZE.w/2, SIZE.h/2 + 20);
+        c.fillText('Backspace to delete', SIZE.w/2, SIZE.h/2 + 45);
+      } else {
+        // Show leaderboard
+        c.font = '600 20px system-ui';
+        c.fillText('Leaderboard', SIZE.w/2, SIZE.h/2 - 50);
+        
+        c.font = '500 16px system-ui';
+        c.textAlign = 'left';
+        const startY = SIZE.h/2 - 30;
+        const lineHeight = 20;
+        
+        // Show top 5 scores
+        for (let i = 0; i < Math.min(5, leaderboard.length); i++) {
+          const entry = leaderboard[i];
+          const y = startY + (i * lineHeight);
+          const rank = i + 1;
+          const isCurrentScore = entry.score === score && entry.timestamp > Date.now() - 2000; // Within last 2 seconds
+          
+          if (isCurrentScore) {
+            c.fillStyle = '#ffd166'; // Highlight current score
+          } else {
+            c.fillStyle = '#e6edf3';
+          }
+          
+          c.fillText(`${rank}. ${entry.name}: ${entry.score} (${entry.date})`, SIZE.w/2 - 120, y);
+        }
+        
+        c.textAlign = 'center';
+        c.fillStyle = '#e6edf3';
+        c.font = '500 18px system-ui';
+        c.fillText('Press R or Tap to Restart', SIZE.w/2, SIZE.h/2 + 80);
+        c.textAlign = 'left';
+      }
+    }
+  }
+
+  function restart() {
+    obstacles = []; cans = [];
+    player.x = 250; player.y = GROUND_Y - 80; player.vy = 0; player.onGround = true; player.canDoubleJump = false; player.walkFrame = 0; player.walkTimer = 0;
+    speed = 360; score = 0; gameOver = false; backgroundOffset = 0; showNameInput = false; playerName = '';
+    obsTimer = 0; canTimer = 0;
+  }
+
+  // helpers
+  function rectRect(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+  function rectCircle(r, c2) {
+    // clamp circle center to rect
+    const cx = Math.max(r.x, Math.min(c2.x, r.x + r.w));
+    const cy = Math.max(r.y, Math.min(c2.y, r.y + r.h));
+    const dx = c2.x - cx, dy = c2.y - cy;
+    return dx*dx + dy*dy < c2.r*c2.r;
+  }
+  function roundRect(ctx, x, y, w, h, r, fill) {
+    r = Math.min(r, w/2, h/2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    if (fill) ctx.fill(); else ctx.stroke();
+  }
+
+  // start
+  restart();
+  loop();
+  </script>
+</body>
+</html>
+
